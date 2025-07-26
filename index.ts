@@ -20,29 +20,39 @@ const io = new Server(server, {
 	},
 });
 
+const players: { id: string; role: string }[] = [];
+
 io.on("connection", (socket: Socket) => {
-	console.log("a user connected", socket.id);
+	if (players.length === 0) {
+		players.push({ id: socket.id, role: "player1" });
+	}
+
+	if (players.length === 2) {
+		players[0].role = "player1";
+	}
+
+	console.log("players", players);
+
+	socket.emit("player-roles", players);
 
 	socket.on("disconnect", () => {
 		console.log("user disconnected");
+		// players = players.filter((player) => player.id !== socket.id);
 	});
 
 	socket.on("move", (data) => {
-		console.log("data", data);
 		socket.broadcast.emit("move", data);
 	});
 
 	socket.on("winnerData", (data) => {
-		console.log("winnerData", data);
 		socket.broadcast.emit("winnerData", data);
 	});
 
 	socket.on("reset", (data) => {
-		console.log("reset", data);
 		socket.broadcast.emit("reset", data);
 	});
 });
 
 server.listen(PORT, () => {
-	console.log(`server runnng at port 3000`);
+	console.log(`server runnng at port ${PORT}`);
 });
