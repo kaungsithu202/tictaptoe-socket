@@ -1,11 +1,20 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "commonjs",
-    "strict": true,
-    "esModuleInterop": true,
-    "outDir": "dist"
+    // ... other options
+    "target": "ES2020", // Or your desired target
+    "module": "commonjs", // Important for Node.js environments
+    "moduleResolution": "node", // Tells TS to resolve modules like Node.js does
+    "esModuleInterop": true, // Allows default imports like `import { v4 as uuidv4 } from 'uuid';`
+    "skipLibCheck": true, // Good to have for performance
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist", // Where your compiled JS will go
+    "rootDir": "./server", // Assuming your TS files are in a 'server' directory
+    "baseUrl": "./", // Base directory for module resolution
+    "paths": {
+      "*": ["./*", "./server/*", "./node_modules/*"] // Map paths
+    }
+    // ...
   },
-  "include": ["**/*.ts"],
+  "include": ["server/**/*.ts"], // Make sure this points to your TS source files
   "exclude": ["node_modules"]
 }
