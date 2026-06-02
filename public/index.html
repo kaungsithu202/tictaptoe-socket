@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Tic Tap Toe</title>
+		<link rel="stylesheet" href="/styles.css" />
+	</head>
+	<body>
+		<main class="shell">
+			<section class="panel lobby-panel" aria-label="Lobby">
+				<div class="brand-row">
+					<div>
+						<p class="eyebrow">Socket match room</p>
+						<h1>Tic Tap Toe</h1>
+					</div>
+					<div class="connection" id="connectionStatus">Connecting</div>
+				</div>
+
+				<form class="create-form" id="createForm">
+					<label>
+						<span>Room name</span>
+						<input id="roomName" maxlength="40" placeholder="Friday match" autocomplete="off" />
+					</label>
+					<label class="check-row">
+						<input id="privateRoom" type="checkbox" />
+						<span>Private room</span>
+					</label>
+					<button type="submit">Create room</button>
+				</form>
+
+				<form class="join-form" id="joinForm">
+					<label>
+						<span>Room code</span>
+						<input id="roomCode" maxlength="8" placeholder="A1B2C3" autocomplete="off" />
+					</label>
+					<button type="submit">Join</button>
+				</form>
+
+				<div class="lobby-header">
+					<h2>Open rooms</h2>
+					<button class="ghost" id="copyLinkButton" type="button" disabled>Copy invite</button>
+				</div>
+				<div class="room-list" id="roomList"></div>
+			</section>
+
+			<section class="table" aria-label="Game">
+				<div class="match-top">
+					<div>
+						<p class="eyebrow">Current match</p>
+						<h2 id="matchName">No room selected</h2>
+					</div>
+					<div class="match-controls">
+						<button class="icon-button" id="soundButton" type="button" aria-pressed="true" title="Toggle sound">
+							Sound on
+						</button>
+						<div class="room-code" id="activeRoomCode">------</div>
+					</div>
+				</div>
+
+				<div class="score-strip">
+					<div class="player-pill" id="playerXPill">
+						<span>X</span>
+						<strong>Waiting</strong>
+					</div>
+					<div class="round-pill" id="roundPill">Round 1</div>
+					<div class="player-pill" id="playerOPill">
+						<span>O</span>
+						<strong>Waiting</strong>
+					</div>
+				</div>
+
+				<div class="status-card" id="statusText">Create or join a room to start.</div>
+				<div class="result-banner" id="resultBanner" aria-live="polite">
+					<p id="resultKicker">Match result</p>
+					<strong id="resultTitle">Waiting for a game</strong>
+					<span id="resultDetail">Create or join a room to begin.</span>
+				</div>
+
+				<div class="board" id="board" aria-label="Tic-tac-toe board"></div>
+
+				<div class="actions">
+					<button id="resetButton" type="button" disabled>Rematch</button>
+					<button id="leaveButton" class="secondary" type="button" disabled>Leave</button>
+				</div>
+			</section>
+		</main>
+
+		<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+		<script src="/socket.io/socket.io.js"></script>
+		<script src="/app.js"></script>
+	</body>
+</html>

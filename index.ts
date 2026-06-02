@@ -1,42 +1,23 @@
-// server/index.ts (or your main server file)
-
 import { createServer } from "node:http";
+import path from "node:path";
 import express from "express";
 import { Server, type Socket } from "socket.io";
-import { v4 as uuidv4 } from "uuid"; // For generating unique IDs
+import { v4 as uuidv4 } from "uuid";
 
-// --- TypeScript Types ---
-//
-//
+type PlayerSymbol = "X" | "O";
+type GameStatus = "waiting" | "playing" | "finished";
+type Winner = PlayerSymbol | "draw" | null;
 
-// type CreateRoomCallback = (response: {
-// 	success: boolean;
-// 	roomId?: string;
-// 	roomData?: TicTacToeRoom;
-// 	message?: string;
-// }) => void;
-
-// // For joinRoom callback
-// type JoinRoomCallback = (response: {
-// 	success: boolean;
-// 	roomData?: TicTacToeRoom;
-// 	message?: string;
-// 	playerSymbol?: "X" | "O";
-// }) => void;
-
-// For room data sent by server
-interface PartialTicTacToeRoom {
-	id: string;
-	name: string;
-	memberCount: number;
-	maxMembers: 2;
-	createdAt: string;
-	isPrivate: boolean;
-	gameStatus: "waiting" | "playing" | "finished";
-	needsPlayer: boolean;
+interface GameState {
+	board: (PlayerSymbol | null)[];
+	currentPlayer: string | null;
+	gameStatus: GameStatus;
+	winner: Winner;
+	playerX: string | null;
+	playerO: string | null;
+	winLine: number[];
+	round: number;
 }
-
-// The full room object stored server-side
 
 interface TicTacToeRoom {
 	id: string;
@@ -49,15 +30,15 @@ interface TicTacToeRoom {
 	gameState: GameState;
 }
 
-// Game state details
-interface GameState {
-	board: (string | null)[];
-	currentPlayer: string | null; // socket.id of current player
-	gameStatus: "waiting" | "playing" | "finished";
-	winner: string | null; // socket.id of winner, or 'draw'
-	playerX: string | null; // socket.id of X player
-	playerO: string | null; // socket.id of O player
-	winLine?: number[]; // Optional: to store winning line indices
+interface PublicRoom {
+	id: string;
+	name: string;
+	memberCount: number;
+	maxMembers: 2;
+	createdAt: string;
+	isPrivate: boolean;
+	gameStatus: GameStatus;
+	needsPlayer: boolean;
 }
 
 interface RoomData {
@@ -65,106 +46,88 @@ interface RoomData {
 	isPrivate?: boolean;
 }
 
-interface GameState {
-	board: (string | null)[];
-	currentPlayer: string | null; // socket.id of current player
-	gameStatus: "waiting" | "playing" | "finished";
-	winner: string | null; // socket.id of winner, or 'draw'
-	playerX: string | null; // socket.id of X player
-	playerO: string | null; // socket.id of O player
-	winLine?: number[]; // To store winning line indices
-}
-
-type CreateRoomCallback = (response: {
-	success: boolean;
-	roomId?: string;
-	roomData?: TicTacToeRoom;
-	message?: string;
-}) => void;
-
-type JoinRoomCallback = (response: {
-	success: boolean;
-	roomData?: TicTacToeRoom;
-	message?: string;
-	playerSymbol?: "X" | "O";
-}) => void;
-
 interface SocketWithRoom extends Socket {
-	roomId?: string; // Optional: To track which room the socket is currently in
+	roomId?: string;
 }
 
-// --- Server Setup ---
+type Ack<T = unknown> = (response: T) => void;
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3500;
-
+const PORT = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3500;
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
 	cors: {
-		origin: "*", // Be more specific in production
+		origin: "*",
 		methods: ["GET", "POST"],
 	},
 });
 
-// --- Global State ---
-
 const activeRooms = new Map<string, TicTacToeRoom>();
+const publicPath = path.join(__dirname, "public");
 
-// --- Helper Functions ---
+app.use(express.static(publicPath));
+app.get(/.*/, (_req, res) => {
+	res.sendFile(path.join(publicPath, "index.html"));
+});
 
 function generateRoomId(): string {
-	return uuidv4().substring(0, 8).toUpperCase();
+	return uuidv4().replace(/-/g, "").slice(0, 6).toUpperCase();
 }
 
-function getPublicRooms(): PartialTicTacToeRoom[] {
-	const rooms: PartialTicTacToeRoom[] = [];
-	activeRooms.forEach((room, roomId) => {
-		if (!room.isPrivate) {
-			rooms.push({
-				id: roomId,
-				name: room.name,
-				memberCount: room.members.length,
-				maxMembers: 2,
-				createdAt: room.createdAt,
-				isPrivate: room.isPrivate,
-				gameStatus: room.gameState.gameStatus,
-				needsPlayer: room.members.length < 2,
-			});
-		}
-	});
-	return rooms;
-}
-
-function initializeGameState(): GameState {
+function createInitialGameState(round = 1): GameState {
 	return {
-		board: Array(9).fill(null),
+		board: Array<PlayerSymbol | null>(9).fill(null),
 		currentPlayer: null,
 		gameStatus: "waiting",
 		winner: null,
 		playerX: null,
 		playerO: null,
+		winLine: [],
+		round,
 	};
 }
 
-function checkGameWinner(board: (string | null)[]): {
-	winner: string | null;
+function getPublicRooms(): PublicRoom[] {
+	return [...activeRooms.values()]
+		.filter((room) => !room.isPrivate)
+		.map((room) => ({
+			id: room.id,
+			name: room.name,
+			memberCount: room.members.length,
+			maxMembers: room.maxMembers,
+			createdAt: room.createdAt,
+			isPrivate: room.isPrivate,
+			gameStatus: room.gameState.gameStatus,
+			needsPlayer: room.members.length < room.maxMembers,
+		}))
+		.sort((a, b) => Number(b.needsPlayer) - Number(a.needsPlayer));
+}
+
+function getPlayerSymbol(room: TicTacToeRoom, socketId: string): PlayerSymbol | null {
+	if (room.gameState.playerX === socketId) return "X";
+	if (room.gameState.playerO === socketId) return "O";
+	return null;
+}
+
+function checkGameWinner(board: (PlayerSymbol | null)[]): {
+	winner: Winner;
 	winLine: number[];
 } {
 	const lines = [
 		[0, 1, 2],
 		[3, 4, 5],
-		[6, 7, 8], // rows
+		[6, 7, 8],
 		[0, 3, 6],
 		[1, 4, 7],
-		[2, 5, 8], // columns
+		[2, 5, 8],
 		[0, 4, 8],
-		[2, 4, 6], // diagonals
+		[2, 4, 6],
 	];
 
 	for (const line of lines) {
 		const [a, b, c] = line;
 		if (board[a] && board[a] === board[b] && board[a] === board[c]) {
-			return { winner: board[a] as string, winLine: line };
+			return { winner: board[a], winLine: line };
 		}
 	}
 
@@ -175,386 +138,237 @@ function checkGameWinner(board: (string | null)[]): {
 	return { winner: null, winLine: [] };
 }
 
-// --- Socket Event Handlers ---
+function emitRoomList(): void {
+	io.emit("roomList", getPublicRooms());
+}
+
+function emitRoomState(room: TicTacToeRoom): void {
+	io.to(room.id).emit("roomState", room);
+}
+
+function removeSocketFromRoom(socket: SocketWithRoom, reason: "leave" | "disconnect" | "switch"): void {
+	const roomId = socket.roomId;
+	if (!roomId) return;
+
+	const room = activeRooms.get(roomId);
+	socket.leave(roomId);
+	socket.roomId = undefined;
+
+	if (!room) return;
+
+	room.members = room.members.filter((memberId) => memberId !== socket.id);
+
+	if (room.members.length === 0) {
+		activeRooms.delete(roomId);
+		emitRoomList();
+		return;
+	}
+
+	const remainingPlayerId = room.members[0];
+	room.creator = remainingPlayerId;
+	room.gameState = createInitialGameState(room.gameState.round + 1);
+	room.gameState.playerX = remainingPlayerId;
+	room.gameState.currentPlayer = null;
+
+	io.to(roomId).emit(reason === "disconnect" ? "playerDisconnected" : "playerLeft", {
+		message: "Opponent left. Waiting for a new player.",
+		gameState: room.gameState,
+	});
+	emitRoomState(room);
+	emitRoomList();
+}
 
 io.on("connection", (socket: SocketWithRoom) => {
-	console.log(`🎮 Player connected: ${socket.id}`);
-
-	// Initial room list broadcast
+	console.log(`Player connected: ${socket.id}`);
 	socket.emit("roomList", getPublicRooms());
 
-	// --- CREATE ROOM ---
-	socket.on(
-		"createRoom",
-		(roomData: RoomData, callback: CreateRoomCallback) => {
-			try {
-				if (typeof callback !== "function") {
-					console.warn(`createRoom called without callback by ${socket.id}`);
-					return;
-				}
-				if (!roomData || typeof roomData !== "object") {
-					return callback({
-						success: false,
-						message: "Invalid room data provided",
-					});
-				}
+	socket.on("createRoom", (roomData: RoomData = {}, callback: Ack) => {
+		if (typeof callback !== "function") return;
 
-				let roomId: string;
-				let attempts = 0;
-				const maxAttempts = 50;
-				do {
-					roomId = generateRoomId();
-					attempts++;
-					if (attempts > maxAttempts) {
-						return callback({
-							success: false,
-							message: "Failed to generate unique room ID. Please try again.",
-						});
-					}
-				} while (activeRooms.has(roomId));
+		removeSocketFromRoom(socket, "switch");
 
-				const newRoom: TicTacToeRoom = {
-					id: roomId,
-					name:
-						roomData.name?.trim() || `Tic-Tac-Toe ${roomId.substring(0, 4)}`,
-					creator: socket.id,
-					members: [socket.id],
-					maxMembers: 2,
-					isPrivate: roomData.isPrivate || false,
-					createdAt: new Date().toISOString(),
-					gameState: initializeGameState(),
-				};
+		let roomId = generateRoomId();
+		let attempts = 0;
+		while (activeRooms.has(roomId) && attempts < 50) {
+			roomId = generateRoomId();
+			attempts += 1;
+		}
 
-				newRoom.gameState.playerX = socket.id; // Creator is Player X
-				activeRooms.set(roomId, newRoom);
-				socket.join(roomId);
-				socket.roomId = roomId; // Track room for socket
+		if (activeRooms.has(roomId)) {
+			callback({ success: false, message: "Could not create a unique room code." });
+			return;
+		}
 
-				callback({ success: true, roomId: roomId, roomData: newRoom });
-				io.emit("roomList", getPublicRooms()); // Update list for all clients
-				console.log(
-					`✅ Room ${roomId} (${newRoom.name}) created by ${socket.id} (Player X)`,
-				);
-			} catch (error) {
-				console.error("❌ Error creating room:", error);
-				callback({
-					success: false,
-					message: "Internal server error while creating room",
-				});
-			}
-		},
-	);
+		const gameState = createInitialGameState();
+		gameState.playerX = socket.id;
 
-	// --- JOIN ROOM ---
-	socket.on("joinRoom", (roomId: string, callback: JoinRoomCallback) => {
-		try {
-			if (typeof callback !== "function") {
-				console.warn(`joinRoom called without callback by ${socket.id}`);
-				return;
-			}
-			if (!roomId || typeof roomId !== "string") {
-				return callback({
-					success: false,
-					message: "Invalid room ID provided",
-				});
-			}
-			if (!activeRooms.has(roomId)) {
-				return callback({ success: false, message: "Room not found." });
-			}
+		const room: TicTacToeRoom = {
+			id: roomId,
+			name: roomData.name?.trim().slice(0, 40) || `Match ${roomId}`,
+			creator: socket.id,
+			members: [socket.id],
+			maxMembers: 2,
+			isPrivate: Boolean(roomData.isPrivate),
+			createdAt: new Date().toISOString(),
+			gameState,
+		};
 
-			const room = activeRooms.get(roomId)!;
+		activeRooms.set(roomId, room);
+		socket.join(roomId);
+		socket.roomId = roomId;
 
-			if (room.members.includes(socket.id)) {
-				const playerSymbol = room.gameState.playerX === socket.id ? "X" : "O";
+		callback({ success: true, roomId, roomData: room, playerSymbol: "X" });
+		emitRoomList();
+		console.log(`Room ${roomId} created by ${socket.id}`);
+	});
 
-				console.log("playerSymbol", playerSymbol);
+	socket.on("joinRoom", (rawRoomId: string, callback: Ack) => {
+		if (typeof callback !== "function") return;
 
-				return callback({
-					success: true,
-					roomData: room,
-					message: "You are already in this room",
-					playerSymbol: playerSymbol,
-				});
-			}
-			if (room.members.length >= 2) {
-				return callback({ success: false, message: "Room is full." });
-			}
+		const roomId = rawRoomId?.trim().toUpperCase();
+		const room = activeRooms.get(roomId);
+		if (!room) {
+			callback({ success: false, message: "Room not found." });
+			return;
+		}
 
-			// Assign as Player O
-			room.members.push(socket.id);
-			room.gameState.playerO = socket.id;
-			room.gameState.gameStatus = "playing";
-			room.gameState.currentPlayer = room.gameState.playerX; // X starts
-
-			socket.join(roomId);
-			socket.roomId = roomId; // Track room for socket
-
-			// Notify existing player (creator)
-			socket.to(roomId).emit("playerJoined", {
-				message: `Player ${socket.id.substring(0, 4)} joined!`,
-				gameState: room.gameState,
-				opponentId: socket.id,
-			});
-
-			// Notify all in room about game start
-			io.to(roomId).emit("gameStarted", {
-				gameState: room.gameState,
-				playerX: room.gameState.playerX,
-				playerO: room.gameState.playerO,
-				currentPlayer: room.gameState.currentPlayer,
-			});
-
-			io.emit("roomList", getPublicRooms()); // Update list for all clients
-
-			callback({ success: true, roomData: room, playerSymbol: "O" });
-			console.log(
-				`✅ Player ${socket.id} joined room ${roomId} as Player O. Game started!`,
-			);
-		} catch (error) {
-			console.error("❌ Error joining room:", error);
+		if (room.members.includes(socket.id)) {
 			callback({
-				success: false,
-				message: "Internal server error while joining room",
+				success: true,
+				roomData: room,
+				playerSymbol: getPlayerSymbol(room, socket.id),
+				message: "You are already in this room.",
 			});
+			return;
 		}
+
+		if (room.members.length >= room.maxMembers) {
+			callback({ success: false, message: "Room is full." });
+			return;
+		}
+
+		removeSocketFromRoom(socket, "switch");
+
+		room.members.push(socket.id);
+		room.gameState.playerO = socket.id;
+		room.gameState.currentPlayer = room.gameState.playerX;
+		room.gameState.gameStatus = "playing";
+
+		socket.join(room.id);
+		socket.roomId = room.id;
+
+		callback({ success: true, roomData: room, playerSymbol: "O" });
+		io.to(room.id).emit("gameStarted", room);
+		emitRoomState(room);
+		emitRoomList();
+		console.log(`Player ${socket.id} joined room ${room.id}`);
 	});
 
-	// --- LEAVE ROOM ---
-	socket.on(
-		"leaveRoom",
-		(
-			roomId: string,
-			callback?: (response: { success: boolean; message?: string }) => void,
-		) => {
-			try {
-				if (!roomId || typeof roomId !== "string") {
-					if (callback)
-						callback({ success: false, message: "Invalid room ID" });
-					return;
-				}
-				if (!activeRooms.has(roomId)) {
-					if (callback) callback({ success: false, message: "Room not found" });
-					return;
-				}
+	socket.on("leaveRoom", (callback?: Ack) => {
+		removeSocketFromRoom(socket, "leave");
+		callback?.({ success: true });
+	});
 
-				const room = activeRooms.get(roomId)!;
-				const memberIndex = room.members.indexOf(socket.id);
+	socket.on("makeMove", (data: { roomId: string; position: number }, callback: Ack) => {
+		if (typeof callback !== "function") return;
 
-				if (memberIndex > -1) {
-					room.members.splice(memberIndex, 1);
-					socket.leave(roomId);
-					socket.roomId = undefined; // Clear room tracking
+		const roomId = data?.roomId?.trim().toUpperCase();
+		const position = data?.position;
+		const room = activeRooms.get(roomId);
 
-					if (room.members.length === 0) {
-						activeRooms.delete(roomId);
-						console.log(`🗑️ Room ${roomId} deleted - no players left`);
-					} else {
-						// Reset game state and notify remaining player
-						const remainingPlayerId = room.members[0];
-						room.gameState = initializeGameState();
-						room.gameState.playerX = remainingPlayerId; // Remaining player becomes X
-						room.gameState.currentPlayer = remainingPlayerId;
+		if (!room) {
+			callback({ success: false, message: "Room not found." });
+			return;
+		}
 
-						socket.to(roomId).emit("playerLeft", {
-							message: "Opponent left. Waiting for a new player...",
-							gameState: room.gameState,
-						});
-						console.log(
-							`👋 Player ${socket.id} left room ${roomId}. Remaining: ${remainingPlayerId}`,
-						);
-					}
-					io.emit("roomList", getPublicRooms());
-					if (callback) callback({ success: true });
-				} else {
-					if (callback)
-						callback({ success: false, message: "Not in this room" });
-				}
-			} catch (error) {
-				console.error("❌ Error leaving room:", error);
-				if (callback)
-					callback({ success: false, message: "Internal server error" });
-			}
-		},
-	);
+		const playerSymbol = getPlayerSymbol(room, socket.id);
+		if (!playerSymbol) {
+			callback({ success: false, message: "Only players can move." });
+			return;
+		}
 
-	// --- MAKE MOVE ---
-	socket.on(
-		"makeMove",
-		(
-			data: { roomId: string; position: number; playerSymbol: "X" | "O" },
-			callback: (response: { success: boolean; message?: string }) => void,
-		) => {
-			try {
-				const { roomId, position, playerSymbol } = data;
+		if (room.gameState.gameStatus !== "playing") {
+			callback({ success: false, message: "Game is not active." });
+			return;
+		}
 
-				console.log("makeMove data", data);
+		if (room.gameState.currentPlayer !== socket.id) {
+			callback({ success: false, message: "Not your turn." });
+			return;
+		}
 
-				if (!roomId || typeof roomId !== "string")
-					return callback({ success: false, message: "Invalid room ID" });
-				if (typeof position !== "number" || position < 0 || position > 8)
-					return callback({ success: false, message: "Invalid position" });
-				if (playerSymbol !== "X" && playerSymbol !== "O")
-					return callback({ success: false, message: "Invalid player symbol" });
+		if (!Number.isInteger(position) || position < 0 || position > 8) {
+			callback({ success: false, message: "Invalid board position." });
+			return;
+		}
 
-				if (!activeRooms.has(roomId)) {
-					return callback({ success: false, message: "Room not found" });
-				}
+		if (room.gameState.board[position] !== null) {
+			callback({ success: false, message: "That square is already taken." });
+			return;
+		}
 
-				const room = activeRooms.get(roomId)!;
+		room.gameState.board[position] = playerSymbol;
+		const result = checkGameWinner(room.gameState.board);
 
-				// --- Validation Checks ---
-				if (room.gameState.gameStatus !== "playing") {
-					return callback({
-						success: false,
-						message: "Game is not currently playing",
-					});
-				}
-				if (room.gameState.currentPlayer !== socket.id) {
-					return callback({ success: false, message: "Not your turn" });
-				}
-				if (room.gameState.board[position] !== null) {
-					return callback({
-						success: false,
-						message: "Position already taken",
-					});
-				}
+		if (result.winner) {
+			room.gameState.gameStatus = "finished";
+			room.gameState.winner = result.winner;
+			room.gameState.currentPlayer = null;
+			room.gameState.winLine = result.winLine;
+		} else {
+			room.gameState.currentPlayer =
+				socket.id === room.gameState.playerX ? room.gameState.playerO : room.gameState.playerX;
+		}
 
-				// --- Make the Move ---
-				room.gameState.board[position] = playerSymbol;
+		io.to(room.id).emit("gameMove", {
+			gameState: room.gameState,
+			position,
+			playerSymbol,
+		});
+		emitRoomState(room);
+		emitRoomList();
+		callback({ success: true });
+	});
 
-				// --- Check for Winner / Draw ---
-				const gameResult = checkGameWinner(room.gameState.board);
+	socket.on("resetGame", (rawRoomId: string, callback: Ack) => {
+		if (typeof callback !== "function") return;
 
-				if (gameResult.winner) {
-					room.gameState.gameStatus = "finished";
-					// Store the winner's socket ID or 'draw'
-					room.gameState.winner =
-						gameResult.winner === "draw"
-							? "draw"
-							: playerSymbol === gameResult.winner
-								? socket.id
-								: room.gameState.playerX === socket.id
-									? room.gameState.playerX
-									: room.gameState.playerO;
-					room.gameState.winLine = gameResult.winLine;
-				} else {
-					// Switch turns
-					room.gameState.currentPlayer =
-						room.gameState.currentPlayer === room.gameState.playerX
-							? room.gameState.playerO
-							: room.gameState.playerX;
-				}
+		const roomId = rawRoomId?.trim().toUpperCase();
+		const room = activeRooms.get(roomId);
+		if (!room) {
+			callback({ success: false, message: "Room not found." });
+			return;
+		}
 
-				// --- Broadcast Update ---
-				io.to(roomId).emit("gameMove", {
-					gameState: room.gameState,
-					position: position, // Useful for frontend animation
-					playerSymbol: playerSymbol, // The symbol that was just placed
-				});
+		if (!room.members.includes(socket.id)) {
+			callback({ success: false, message: "Only players can reset this match." });
+			return;
+		}
 
-				callback({ success: true });
-			} catch (error) {
-				console.error("❌ Error making move:", error);
-				callback({ success: false, message: "Internal server error" });
-			}
-		},
-	);
+		if (room.members.length < 2) {
+			callback({ success: false, message: "Waiting for an opponent." });
+			return;
+		}
 
-	// --- RESET GAME ---
-	socket.on(
-		"resetGame",
-		(
-			roomId: string,
-			callback: (response: { success: boolean; message?: string }) => void,
-		) => {
-			try {
-				if (!roomId || typeof roomId !== "string") {
-					return callback({ success: false, message: "Invalid room ID" });
-				}
-				if (!activeRooms.has(roomId)) {
-					return callback({ success: false, message: "Room not found" });
-				}
+		const nextState = createInitialGameState(room.gameState.round + 1);
+		nextState.playerX = room.gameState.playerO;
+		nextState.playerO = room.gameState.playerX;
+		nextState.currentPlayer = nextState.playerX;
+		nextState.gameStatus = "playing";
+		room.gameState = nextState;
 
-				const room = activeRooms.get(roomId)!;
+		io.to(room.id).emit("gameReset", room);
+		emitRoomState(room);
+		emitRoomList();
+		callback({ success: true });
+	});
 
-				// Only the creator or players can reset, or maybe anyone if game is finished
-				if (room.creator !== socket.id && !room.members.includes(socket.id)) {
-					return callback({
-						success: false,
-						message: "Only players in the room can reset",
-					});
-				}
-
-				// Reset game state
-				const resetState = initializeGameState();
-				resetState.playerX = room.gameState.playerX; // Keep original players
-				resetState.playerO = room.gameState.playerO;
-				resetState.currentPlayer = room.gameState.playerX; // X starts again
-				resetState.gameStatus = "playing";
-
-				room.gameState = resetState;
-
-				// Broadcast reset to all players in room
-				io.to(roomId).emit("gameReset", {
-					gameState: room.gameState,
-				});
-
-				callback({ success: true });
-				console.log(`🔄 Game in room ${roomId} reset by ${socket.id}`);
-			} catch (error) {
-				console.error("❌ Error resetting game:", error);
-				callback({ success: false, message: "Internal error" });
-			}
-		},
-	);
-
-	// --- DISCONNECT ---
 	socket.on("disconnect", () => {
-		console.log(`👋 Player disconnected: ${socket.id}`);
-		const disconnectedRoomId = socket.roomId; // Get room before clearing
-
-		// Remove user from any room they were in
-		if (disconnectedRoomId && activeRooms.has(disconnectedRoomId)) {
-			const room = activeRooms.get(disconnectedRoomId)!;
-			const memberIndex = room.members.indexOf(socket.id);
-
-			if (memberIndex > -1) {
-				room.members.splice(memberIndex, 1);
-
-				// Handle room deletion or game reset based on remaining players
-				if (room.members.length === 0) {
-					activeRooms.delete(disconnectedRoomId);
-					console.log(
-						`🗑️ Room ${disconnectedRoomId} deleted - no players left.`,
-					);
-				} else {
-					// Reset game state and notify the remaining player
-					const remainingPlayerId = room.members[0];
-					room.gameState = initializeGameState();
-					room.gameState.playerX = remainingPlayerId; // Remaining player becomes X
-					room.gameState.currentPlayer = remainingPlayerId;
-
-					socket.to(disconnectedRoomId).emit("playerDisconnected", {
-						message: `Opponent disconnected. Waiting for a new player...`,
-						gameState: room.gameState,
-					});
-					console.log(
-						`💥 Player ${socket.id} disconnected from room ${disconnectedRoomId}. Remaining: ${remainingPlayerId}`,
-					);
-				}
-				io.emit("roomList", getPublicRooms()); // Update room list
-			}
-		}
-		socket.roomId = undefined; // Clean up socket property
+		console.log(`Player disconnected: ${socket.id}`);
+		removeSocketFromRoom(socket, "disconnect");
 	});
 });
 
-// --- Start Server ---
 server.listen(PORT, () => {
-	console.log(`🚀 Server running on http://localhost:${PORT}`);
+	console.log(`Server running on http://localhost:${PORT}`);
 });
-
-// --- Type Definitions (place these at the top or in a separate types file) ---
-// Ensure these interfaces match your frontend's expectations.
-
-// For createRoom callback
