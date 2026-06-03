@@ -6,7 +6,10 @@ const state = {
 	lastRoomList: [],
 	soundEnabled: true,
 	lastResultKey: null,
-	audioContext: null,
+	audio: {
+		win: new Audio("/winning.mp3"),
+		gameOver: new Audio("/game_over.mp3"),
+	},
 };
 
 const elements = {
@@ -20,8 +23,14 @@ const elements = {
 	copyLinkButton: document.querySelector("#copyLinkButton"),
 	matchName: document.querySelector("#matchName"),
 	activeRoomCode: document.querySelector("#activeRoomCode"),
-	playerXPill: document.querySelector("#playerXPill"),
-	playerOPill: document.querySelector("#playerOPill"),
+	player1Pill: document.querySelector("#player1Pill"),
+	player2Pill: document.querySelector("#player2Pill"),
+	player1Symbol: document.querySelector("#player1Symbol"),
+	player2Symbol: document.querySelector("#player2Symbol"),
+	player1Label: document.querySelector("#player1Label"),
+	player2Label: document.querySelector("#player2Label"),
+	player1Wins: document.querySelector("#player1Wins"),
+	player2Wins: document.querySelector("#player2Wins"),
 	roundPill: document.querySelector("#roundPill"),
 	statusText: document.querySelector("#statusText"),
 	resultBanner: document.querySelector("#resultBanner"),
@@ -73,6 +82,17 @@ function getPlayerLabel(socketId) {
 	if (!socketId) return "Waiting";
 	if (socketId === socket.id) return "You";
 	return "Opponent";
+}
+
+function getSymbolForPlayer(socketId) {
+	if (!state.room || !socketId) return "-";
+	if (state.room.gameState.playerX === socketId) return "X";
+	if (state.room.gameState.playerO === socketId) return "O";
+	return "-";
+}
+
+function formatWins(count) {
+	return `${count} ${count === 1 ? "win" : "wins"}`;
 }
 
 function getStatusText() {
@@ -136,66 +156,18 @@ function getResultView() {
 	};
 }
 
-function getAudioContext() {
-	if (!state.audioContext) {
-		const AudioContext = window.AudioContext || window.webkitAudioContext;
-		if (!AudioContext) return null;
-		state.audioContext = new AudioContext();
-	}
-	return state.audioContext;
-}
-
 function primeAudio() {
-	const context = getAudioContext();
-	if (context?.state === "suspended") context.resume();
-}
-
-function playTone(frequency, startTime, duration, gainValue) {
-	const context = getAudioContext();
-	if (!context) return;
-
-	const oscillator = context.createOscillator();
-	const gain = context.createGain();
-	oscillator.type = "sine";
-	oscillator.frequency.setValueAtTime(frequency, startTime);
-	gain.gain.setValueAtTime(0.001, startTime);
-	gain.gain.exponentialRampToValueAtTime(gainValue, startTime + 0.02);
-	gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
-	oscillator.connect(gain).connect(context.destination);
-	oscillator.start(startTime);
-	oscillator.stop(startTime + duration + 0.03);
+	for (const audio of Object.values(state.audio)) {
+		audio.preload = "auto";
+		audio.load();
+	}
 }
 
 function playResultSound(tone) {
 	if (!state.soundEnabled) return;
-	const context = getAudioContext();
-	if (!context) return;
-
-	if (context.state === "suspended") {
-		context.resume().catch(() => {});
-	}
-
-	const now = context.currentTime + 0.04;
-	const patterns = {
-		win: [
-			[523.25, 0, 0.11, 0.12],
-			[659.25, 0.1, 0.12, 0.12],
-			[783.99, 0.21, 0.2, 0.14],
-		],
-		lose: [
-			[392, 0, 0.14, 0.1],
-			[329.63, 0.12, 0.18, 0.09],
-			[261.63, 0.27, 0.24, 0.08],
-		],
-		draw: [
-			[440, 0, 0.12, 0.1],
-			[440, 0.16, 0.12, 0.08],
-		],
-	};
-
-	for (const [frequency, offset, duration, gainValue] of patterns[tone] ?? []) {
-		playTone(frequency, now + offset, duration, gainValue);
-	}
+	const audio = tone === "win" ? state.audio.win : state.audio.gameOver;
+	audio.currentTime = 0;
+	audio.play().catch(() => {});
 }
 
 function renderResultBanner() {
@@ -267,10 +239,14 @@ function renderGame() {
 	elements.statusText.textContent = getStatusText();
 	renderResultBanner();
 
-	elements.playerXPill.querySelector("strong").textContent = getPlayerLabel(game?.playerX);
-	elements.playerOPill.querySelector("strong").textContent = getPlayerLabel(game?.playerO);
-	elements.playerXPill.classList.toggle("active", game?.currentPlayer === game?.playerX && game?.gameStatus === "playing");
-	elements.playerOPill.classList.toggle("active", game?.currentPlayer === game?.playerO && game?.gameStatus === "playing");
+	elements.player1Symbol.textContent = getSymbolForPlayer(room?.player1);
+	elements.player2Symbol.textContent = getSymbolForPlayer(room?.player2);
+	elements.player1Label.textContent = `Player 1 · ${getPlayerLabel(room?.player1)}`;
+	elements.player2Label.textContent = `Player 2 · ${getPlayerLabel(room?.player2)}`;
+	elements.player1Wins.textContent = formatWins(room?.score?.player1 ?? 0);
+	elements.player2Wins.textContent = formatWins(room?.score?.player2 ?? 0);
+	elements.player1Pill.classList.toggle("active", game?.currentPlayer === room?.player1 && game?.gameStatus === "playing");
+	elements.player2Pill.classList.toggle("active", game?.currentPlayer === room?.player2 && game?.gameStatus === "playing");
 
 	renderBoard();
 }
@@ -430,7 +406,9 @@ socket.on("gameStarted", (room) => {
 
 socket.on("gameMove", ({ gameState }) => {
 	if (!state.room) return;
-	state.room.gameState = gameState;
+	const previousRoom = state.room;
+	state.room = { ...state.room, gameState };
+	handleResultSound(previousRoom, state.room);
 	renderGame();
 });
 

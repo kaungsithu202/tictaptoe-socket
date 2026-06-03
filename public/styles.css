@@ -352,7 +352,7 @@ input:focus {
 	transition: border-color 160ms ease, background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
 
-.player-pill span {
+.player-pill > span {
 	display: grid;
 	width: 34px;
 	aspect-ratio: 1;
@@ -364,17 +364,33 @@ input:focus {
 	box-shadow: 0 0 12px color-mix(in oklch, var(--pink), transparent 48%);
 }
 
-#playerOPill span {
+#player2Pill > span {
 	background: var(--cyan);
 	box-shadow: 0 0 12px color-mix(in oklch, var(--cyan), transparent 48%);
 }
 
-.player-pill strong {
+.player-pill div {
+	display: grid;
+	gap: 0.2rem;
+	min-width: 0;
+}
+
+.player-pill strong,
+.player-pill small {
 	overflow-wrap: anywhere;
+	text-transform: uppercase;
+}
+
+.player-pill strong {
 	color: var(--text);
 	font-size: 0.78rem;
 	font-weight: 400;
-	text-transform: uppercase;
+}
+
+.player-pill small {
+	color: var(--yellow);
+	font-size: 0.66rem;
+	line-height: 1.2;
 }
 
 .player-pill.active {

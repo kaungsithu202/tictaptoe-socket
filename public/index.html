@@ -4,6 +4,7 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>Tic Tap Toe</title>
+		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 		<link rel="stylesheet" href="/styles.css" />
 	</head>
 	<body>
@@ -59,14 +60,20 @@
 				</div>
 
 				<div class="score-strip">
-					<div class="player-pill" id="playerXPill">
-						<span>X</span>
-						<strong>Waiting</strong>
+					<div class="player-pill" id="player1Pill">
+						<span id="player1Symbol">X</span>
+						<div>
+							<strong id="player1Label">Player 1</strong>
+							<small id="player1Wins">0 wins</small>
+						</div>
 					</div>
 					<div class="round-pill" id="roundPill">Round 1</div>
-					<div class="player-pill" id="playerOPill">
-						<span>O</span>
-						<strong>Waiting</strong>
+					<div class="player-pill" id="player2Pill">
+						<span id="player2Symbol">O</span>
+						<div>
+							<strong id="player2Label">Player 2</strong>
+							<small id="player2Wins">0 wins</small>
+						</div>
 					</div>
 				</div>
 

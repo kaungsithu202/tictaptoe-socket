@@ -24,6 +24,12 @@ interface TicTacToeRoom {
 	name: string;
 	creator: string;
 	members: string[];
+	player1: string;
+	player2: string | null;
+	score: {
+		player1: number;
+		player2: number;
+	};
 	maxMembers: 2;
 	isPrivate: boolean;
 	createdAt: string;
@@ -109,6 +115,19 @@ function getPlayerSymbol(room: TicTacToeRoom, socketId: string): PlayerSymbol | 
 	return null;
 }
 
+function addRoundWin(room: TicTacToeRoom, winner: Winner): void {
+	if (winner === "draw" || winner === null) return;
+
+	const winnerSocketId = winner === "X" ? room.gameState.playerX : room.gameState.playerO;
+	if (winnerSocketId === room.player1) {
+		room.score.player1 += 1;
+		return;
+	}
+	if (winnerSocketId === room.player2) {
+		room.score.player2 += 1;
+	}
+}
+
 function checkGameWinner(board: (PlayerSymbol | null)[]): {
 	winner: Winner;
 	winLine: number[];
@@ -166,6 +185,9 @@ function removeSocketFromRoom(socket: SocketWithRoom, reason: "leave" | "disconn
 
 	const remainingPlayerId = room.members[0];
 	room.creator = remainingPlayerId;
+	room.player1 = remainingPlayerId;
+	room.player2 = null;
+	room.score = { player1: 0, player2: 0 };
 	room.gameState = createInitialGameState(room.gameState.round + 1);
 	room.gameState.playerX = remainingPlayerId;
 	room.gameState.currentPlayer = null;
@@ -207,6 +229,12 @@ io.on("connection", (socket: SocketWithRoom) => {
 			name: roomData.name?.trim().slice(0, 40) || `Match ${roomId}`,
 			creator: socket.id,
 			members: [socket.id],
+			player1: socket.id,
+			player2: null,
+			score: {
+				player1: 0,
+				player2: 0,
+			},
 			maxMembers: 2,
 			isPrivate: Boolean(roomData.isPrivate),
 			createdAt: new Date().toISOString(),
@@ -250,6 +278,7 @@ io.on("connection", (socket: SocketWithRoom) => {
 		removeSocketFromRoom(socket, "switch");
 
 		room.members.push(socket.id);
+		room.player2 = socket.id;
 		room.gameState.playerO = socket.id;
 		room.gameState.currentPlayer = room.gameState.playerX;
 		room.gameState.gameStatus = "playing";
@@ -315,6 +344,7 @@ io.on("connection", (socket: SocketWithRoom) => {
 			room.gameState.winner = result.winner;
 			room.gameState.currentPlayer = null;
 			room.gameState.winLine = result.winLine;
+			addRoundWin(room, result.winner);
 		} else {
 			room.gameState.currentPlayer =
 				socket.id === room.gameState.playerX ? room.gameState.playerO : room.gameState.playerX;
